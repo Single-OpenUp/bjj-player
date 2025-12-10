@@ -72,6 +72,7 @@ export default function Home() {
   const activeIndexRef = useRef(activeIndex);
   const hlsConstructorRef = useRef<null | typeof import("hls.js").default>(null);
   const hlsInstances = useRef<(Hls | null)[]>([]);
+  const isLiveStream = useRef<boolean[]>(cameras.map(() => false));
 
   useEffect(() => {
     activeIndexRef.current = activeIndex;
@@ -153,6 +154,8 @@ export default function Home() {
           maxBufferLength: 30,
           maxMaxBufferLength: 60,
           backBufferLength: 10,
+          liveSyncDurationCount: 3,
+          liveMaxLatencyDurationCount: 10,
         });
         hlsInstances.current[index] = hls;
         hls.attachMedia(video);
@@ -161,7 +164,9 @@ export default function Home() {
           hls.loadSource(src);
         });
 
-        hls.on(HlsConstructor.Events.MANIFEST_PARSED, () => {
+        hls.on(HlsConstructor.Events.MANIFEST_PARSED, (_event, data) => {
+          isLiveStream.current[index] = !data.levels[0]?.details?.live ? false : true;
+
           if (index !== activeIndexRef.current && hls.levels.length > 0) {
             hls.nextLevel = 0;
           }
@@ -172,6 +177,13 @@ export default function Home() {
           if (data?.fatal) {
             hls.destroy();
             hlsInstances.current[index] = null;
+          }
+        });
+
+        video.addEventListener('ended', () => {
+          if (!isLiveStream.current[index]) {
+            video.currentTime = 0;
+            video.play().catch(() => undefined);
           }
         });
       };
@@ -190,15 +202,21 @@ export default function Home() {
       if (nextIndex === activeIndex) return;
 
       const currentVideo = videoRefs.current[activeIndex];
-      if (currentVideo) {
+      const nextVideo = videoRefs.current[nextIndex];
+      const isNextLive = isLiveStream.current[nextIndex];
+      const isCurrentLive = isLiveStream.current[activeIndex];
+
+      if (currentVideo && nextVideo && !isNextLive && !isCurrentLive) {
         const anchorTime = currentVideo.currentTime;
-        if (Number.isFinite(anchorTime)) {
-          pendingSeekRef.current = { index: nextIndex, time: anchorTime };
-        } else {
-          pendingSeekRef.current = null;
+        if (Number.isFinite(anchorTime) && anchorTime > 0) {
+          const duration = nextVideo.duration;
+          if (Number.isFinite(duration) && duration > 0) {
+            const safeTime = Math.min(anchorTime, Math.max(duration - 0.1, 0));
+            nextVideo.currentTime = safeTime;
+          } else {
+            pendingSeekRef.current = { index: nextIndex, time: anchorTime };
+          }
         }
-      } else {
-        pendingSeekRef.current = null;
       }
 
       setActiveIndex(nextIndex);
@@ -238,6 +256,74 @@ export default function Home() {
       video.addEventListener("canplay", attemptPlayback, { once: true });
     }
   }, [activeIndex, isMuted]);
+
+  useEffect(() => {
+    const activeVideo = videoRefs.current[activeIndex];
+    if (!activeVideo) return;
+
+    const isAnyLive = isLiveStream.current.some(live => live);
+
+    if (isAnyLive) {
+      const syncInterval = setInterval(() => {
+        const activeHls = hlsInstances.current[activeIndex];
+        if (!activeHls) return;
+
+        const isActiveLive = isLiveStream.current[activeIndex];
+        const targetLatency = isActiveLive && activeHls.latency
+          ? activeHls.latency
+          : activeVideo.currentTime;
+
+        hlsInstances.current.forEach((hls, index) => {
+          if (!hls || index === activeIndex) return;
+
+          const video = videoRefs.current[index];
+          if (!video || video.paused) return;
+
+          const isThisLive = isLiveStream.current[index];
+
+          if (isActiveLive && isThisLive) {
+            const currentLatency = hls.latency;
+            if (currentLatency && Math.abs(currentLatency - targetLatency) > 1.0) {
+              const targetLevel = hls.levels.length > 0 ? 0 : -1;
+              hls.nextLevel = targetLevel;
+            }
+          } else if (!isActiveLive && !isThisLive) {
+            const timeDiff = Math.abs(video.currentTime - targetLatency);
+            if (timeDiff > 0.5) {
+              const duration = video.duration;
+              if (Number.isFinite(duration) && duration > 0) {
+                const safeTime = Math.min(targetLatency, Math.max(duration - 0.1, 0));
+                video.currentTime = safeTime;
+              }
+            }
+          }
+        });
+      }, 1000);
+
+      return () => clearInterval(syncInterval);
+    } else {
+      const syncInterval = setInterval(() => {
+        const activeTime = activeVideo.currentTime;
+        if (!Number.isFinite(activeTime) || activeTime <= 0) return;
+
+        videoRefs.current.forEach((video, index) => {
+          if (!video || index === activeIndex || video.paused) return;
+
+          const timeDiff = Math.abs(video.currentTime - activeTime);
+          if (timeDiff > 0.5) {
+            const duration = video.duration;
+            if (Number.isFinite(duration) && duration > 0) {
+              const safeTime = Math.min(activeTime, Math.max(duration - 0.1, 0));
+              video.currentTime = safeTime;
+            }
+          }
+        });
+      }, 1000);
+
+      return () => clearInterval(syncInterval);
+    }
+  }, [activeIndex]);
+
   useEffect(() => {
     videoSources.forEach((src, index) => {
       attachStream(index, src);
@@ -368,7 +454,6 @@ export default function Home() {
                       }`}
                     playsInline
                     autoPlay
-                    loop
                     muted={isMuted || !isActive}
                     preload="auto"
                     controls={false}
