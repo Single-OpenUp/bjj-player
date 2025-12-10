@@ -62,11 +62,11 @@ export default function Home() {
   );
 
   const [activeIndex, setActiveIndex] = useState(0);
-  const [isMuted, setIsMuted] = useState(true);
-  const [aspectRatios, setAspectRatios] = useState(() =>
-    cameras.map(() => 16 / 9),
-  );
-  const [isCompact, setIsCompact] = useState(false);
+  const [volume, setVolume] = useState(0);
+  const [showControls, setShowControls] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const videoContainerRef = useRef<HTMLDivElement | null>(null);
   const videoRefs = useRef<(HTMLVideoElement | null)[]>([]);
   const pendingSeekRef = useRef<{ index: number; time: number } | null>(null);
   const activeIndexRef = useRef(activeIndex);
@@ -77,6 +77,53 @@ export default function Home() {
   useEffect(() => {
     activeIndexRef.current = activeIndex;
   }, [activeIndex]);
+
+  const handleMouseMove = useCallback(() => {
+    setShowControls(true);
+    if (controlsTimeoutRef.current) {
+      clearTimeout(controlsTimeoutRef.current);
+    }
+    controlsTimeoutRef.current = setTimeout(() => {
+      setShowControls(false);
+    }, 3000);
+  }, []);
+
+  const handleMouseLeave = useCallback(() => {
+    if (controlsTimeoutRef.current) {
+      clearTimeout(controlsTimeoutRef.current);
+    }
+    controlsTimeoutRef.current = setTimeout(() => {
+      setShowControls(false);
+    }, 1000);
+  }, []);
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      if (controlsTimeoutRef.current) {
+        clearTimeout(controlsTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const toggleFullscreen = useCallback(async () => {
+    if (!videoContainerRef.current) return;
+
+    try {
+      if (!document.fullscreenElement) {
+        await videoContainerRef.current.requestFullscreen();
+      } else {
+        await document.exitFullscreen();
+      }
+    } catch (error) {
+      console.error('Error toggling fullscreen:', error);
+    }
+  }, []);
 
   const videoSources = useMemo(
     () =>
@@ -237,7 +284,9 @@ export default function Home() {
     const video = videoRefs.current[activeIndex];
     if (!video) return;
 
-    video.muted = isMuted;
+    video.muted = volume === 0;
+    video.volume = volume / 100;
+
     const attemptPlayback = () => {
       if (video.paused) {
         const playPromise = video.play();
@@ -255,7 +304,7 @@ export default function Home() {
       video.addEventListener("loadedmetadata", attemptPlayback, { once: true });
       video.addEventListener("canplay", attemptPlayback, { once: true });
     }
-  }, [activeIndex, isMuted]);
+  }, [activeIndex, volume]);
 
   useEffect(() => {
     const activeVideo = videoRefs.current[activeIndex];
@@ -331,6 +380,8 @@ export default function Home() {
   }, [videoSources, attachStream]);
 
   useEffect(() => {
+    console.log("Updating active Index to", activeIndex);
+
     hlsInstances.current.forEach((hls, index) => {
       if (!hls) return;
 
@@ -351,25 +402,6 @@ export default function Home() {
     };
   }, []);
 
-
-  useEffect(() => {
-    const handleResize = () => {
-      setIsCompact(window.innerWidth < 640);
-    };
-
-    handleResize();
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
-  }, []);
-
-  const orbitRadius = isCompact ? 38 : 55;
-  const thumbWidth = isCompact ? "100px" : "130px";
-  const activeWidth = isCompact ? "min(95vw, 360px)" : "min(70vw, 460px)";
-
-  const containerPadding = isCompact
-    ? "px-3 py-8"
-    : "px-4 py-12";
-
   const handleKeyPress = useCallback(
     (event: KeyboardEvent<HTMLDivElement>) => {
       if (event.key === "ArrowRight") {
@@ -382,15 +414,13 @@ export default function Home() {
   );
 
   return (
-    <div
-      className={`min-h-screen bg-linear-to-br from-slate-950 via-slate-900 to-zinc-900 ${containerPadding} text-white`}
-    >
+    <div className="min-h-screen bg-linear-to-br from-slate-950 via-slate-900 to-zinc-900 px-4 py-8 text-white lg:px-8 lg:py-12">
       <main
-        className="mx-auto flex w-full max-w-6xl flex-col gap-8 sm:gap-12"
+        className="mx-auto flex w-full max-w-7xl flex-col gap-8"
         onKeyDown={handleKeyPress}
         tabIndex={0}
         role="application"
-        aria-label="Galeria circular multicanais"
+        aria-label="Visualizador multicanais"
       >
         <section className="rounded-3xl border border-white/10 bg-white/5 p-6 text-center shadow-2xl backdrop-blur sm:p-8 sm:text-left">
           <p className="text-xs uppercase tracking-[0.35em] text-white/50 sm:text-sm">
@@ -405,129 +435,188 @@ export default function Home() {
             qualquer perspectiva imediatamente.
           </p>
         </section>
-        <section>
-          <div className="relative mx-auto aspect-square w-full max-w-full sm:max-w-[540px] lg:max-w-[680px]">
-            {cameras.map((camera, index) => {
-              const angle = (index / cameras.length) * 360;
-              const radians = ((angle - 90) * Math.PI) / 180;
-              const x = 50 + Math.cos(radians) * orbitRadius;
-              const y = 50 + Math.sin(radians) * orbitRadius;
-              const ratio = aspectRatios[index] || 16 / 9;
-              const isActive = index === activeIndex;
 
-              const baseStyles = isActive
-                ? {
-                  top: "50%",
-                  left: "50%",
-                  width: activeWidth,
-                  aspectRatio: ratio,
-                  transform: "translate(-50%, -50%)",
-                  zIndex: 20,
-                }
-                : {
-                  top: `${y}%`,
-                  left: `${x}%`,
-                  width: thumbWidth,
-                  aspectRatio: ratio,
-                  transform: "translate(-50%, -50%)",
-                  zIndex: 5,
-                };
-
-              return (
-                <button
+        <div className="grid gap-8 lg:grid-cols-[1fr,auto]">
+          <section className="flex flex-col gap-4">
+            <div
+              ref={videoContainerRef}
+              className="group relative w-full overflow-hidden rounded-3xl border border-white/20 bg-black shadow-2xl"
+              onMouseMove={handleMouseMove}
+              onMouseLeave={handleMouseLeave}
+            >
+              {cameras.map((camera, index) => (
+                <video
                   key={camera.filename}
-                  type="button"
-                  onClick={() => selectCamera(index)}
-                  className={`group absolute overflow-hidden rounded-3xl border border-white/15 bg-black/40 shadow-[0_15px_35px_rgba(0,0,0,0.35)] transition duration-300 ${isActive ? "hover:border-emerald-200" : "hover:border-white/40"
-                    }`}
-                  style={baseStyles}
-                  aria-pressed={isActive}
-                  aria-label={`Selecionar ${camera.label}`}
-                >
-                  <video
-                    ref={(node) => {
-                      videoRefs.current[index] = node;
-                    }}
-                    className={`h-full w-full object-cover ${isActive
-                      ? "opacity-100"
-                      : "opacity-80 group-hover:opacity-100"
-                      }`}
-                    playsInline
-                    autoPlay
-                    muted={isMuted || !isActive}
-                    preload="auto"
-                    controls={false}
-                    onLoadedMetadata={(event) => {
-                      const video = event.currentTarget;
-                      if (!video.videoWidth || !video.videoHeight) {
-                        return;
+                  ref={(node) => {
+                    videoRefs.current[index] = node;
+                  }}
+                  className={`aspect-video w-full object-cover ${index === activeIndex ? 'block' : 'hidden'}`}
+                  playsInline
+                  autoPlay
+                  muted={index !== activeIndex}
+                  preload="auto"
+                  controls={false}
+                  onLoadedMetadata={(event) => {
+                    const video = event.currentTarget;
+                    const pendingSeek = pendingSeekRef.current;
+                    if (pendingSeek && pendingSeek.index === index) {
+                      const duration = video.duration || pendingSeek.time;
+                      const safeTime = duration
+                        ? Math.min(pendingSeek.time, Math.max(duration - 0.15, 0))
+                        : pendingSeek.time;
+                      try {
+                        video.currentTime = safeTime;
+                      } catch (seekError) {
+                        console.warn("Unable to sync camera", seekError);
+                      } finally {
+                        pendingSeekRef.current = null;
                       }
-                      const newRatio = video.videoWidth / video.videoHeight;
-                      setAspectRatios((prev) => {
-                        if (prev[index] === newRatio) {
-                          return prev;
-                        }
-                        const next = [...prev];
-                        next[index] = newRatio;
-                        return next;
-                      });
+                    }
+                  }}
+                />
+              ))}
+              <div className="absolute left-6 top-6 rounded-full bg-black/70 px-4 py-2 backdrop-blur-sm">
+                <h2 className="text-lg font-bold text-emerald-200">
+                  {cameras[activeIndex].label}
+                </h2>
+              </div>
 
-                      const pendingSeek = pendingSeekRef.current;
-                      if (pendingSeek && pendingSeek.index === index) {
-                        const duration = video.duration || pendingSeek.time;
-                        const safeTime = duration
-                          ? Math.min(pendingSeek.time, Math.max(duration - 0.15, 0))
-                          : pendingSeek.time;
-                        try {
-                          video.currentTime = safeTime;
-                        } catch (seekError) {
-                          console.warn("Unable to sync camera", seekError);
-                        } finally {
-                          pendingSeekRef.current = null;
-                        }
-                      }
-                    }}
-                  />
-                  <span
-                    className={`pointer-events-none absolute inset-x-4 bottom-4 rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide ${isActive
-                      ? "bg-black/70 text-emerald-200"
-                      : "bg-black/50 text-white/80"
-                      }`}
+              <div className={`absolute inset-x-0 bottom-0 bg-linear-to-t from-black/90 via-black/60 to-transparent p-6 transition-opacity duration-300 ${showControls ? 'opacity-100' : 'opacity-0'}`}>
+                <div className="flex items-center justify-between">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <button
+                      className="flex items-center gap-2 rounded-full border border-white/40 bg-black/60 px-4 py-2 text-sm font-medium uppercase tracking-wide text-white backdrop-blur-sm transition hover:border-white hover:bg-black/80"
+                      onClick={() => cycleCamera(-1)}
+                    >
+                      <span className="text-lg">←</span> Anterior
+                    </button>
+                    <button
+                      className="flex items-center gap-2 rounded-full border border-white/40 bg-black/60 px-4 py-2 text-sm font-medium uppercase tracking-wide text-white backdrop-blur-sm transition hover:border-white hover:bg-black/80"
+                      onClick={() => cycleCamera(1)}
+                    >
+                      Próxima <span className="text-lg">→</span>
+                    </button>
+
+                    <div className="group/volume relative flex items-center gap-2 rounded-full border border-white/40 bg-black/60 backdrop-blur-sm transition-all hover:px-4 px-2.5 py-2">
+                      <button
+                        onClick={() => setVolume(volume === 0 ? 50 : 0)}
+                        className="text-white transition hover:text-emerald-200"
+                        aria-label={volume === 0 ? "Ativar som" : "Silenciar"}
+                      >
+                        {volume === 0 ? (
+                          <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" clipRule="evenodd" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
+                          </svg>
+                        ) : volume < 50 ? (
+                          <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                          </svg>
+                        ) : (
+                          <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                          </svg>
+                        )}
+                      </button>
+                      <div className="flex items-center gap-2 overflow-hidden transition-all duration-300 group-hover/volume:max-w-40 group-hover/volume:opacity-100 max-w-0 opacity-0">
+                        <input
+                          type="range"
+                          min="0"
+                          max="100"
+                          value={volume}
+                          onChange={(e) => setVolume(Number(e.target.value))}
+                          className="h-1 w-24 cursor-pointer appearance-none rounded-full bg-white/30 accent-emerald-500 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-emerald-500"
+                          aria-label="Volume"
+                        />
+                        <span className="min-w-10 text-xs font-medium text-white">{volume}%</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <button
+                    className="flex h-10 w-10 items-center justify-center rounded-full border border-white/40 bg-black/60 text-white backdrop-blur-sm transition hover:border-white hover:bg-black/80"
+                    onClick={toggleFullscreen}
+                    aria-label={isFullscreen ? "Sair da tela cheia" : "Tela cheia"}
                   >
-                    {camera.label}
-                  </span>
-                </button>
-              );
-            })}
-            <div className="pointer-events-none absolute inset-0 rounded-full border border-dashed border-white/15" />
-          </div>
-        </section>
+                    {isFullscreen ? (
+                      <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    ) : (
+                      <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </section>
 
-        <section className="mt-4 flex flex-col gap-4 rounded-3xl border border-white/10 bg-white/5 p-6 text-center shadow-2xl backdrop-blur sm:text-left lg:flex-row lg:items-center lg:justify-between">
-          <p className="text-sm uppercase tracking-[0.3em] text-white/60">
-            controles das câmeras
-          </p>
-          <div className="flex flex-col gap-4 sm:flex-row sm:flex-wrap">
-            <button
-              className="w-full rounded-full border border-white/30 px-5 py-2 text-sm font-medium uppercase tracking-wide text-white transition hover:border-white sm:w-auto"
-              onClick={() => cycleCamera(-1)}
-            >
-              Anterior • {cameras[(activeIndex - 1 + cameras.length) % cameras.length].label}
-            </button>
-            <button
-              className="w-full rounded-full border border-white/30 px-5 py-2 text-sm font-medium uppercase tracking-wide text-white transition hover:border-white sm:w-auto"
-              onClick={() => cycleCamera(1)}
-            >
-              Próxima • {cameras[(activeIndex + 1) % cameras.length].label}
-            </button>
-            <button
-              className="w-full rounded-full border border-emerald-400/60 bg-emerald-500/20 px-5 py-2 text-sm font-semibold uppercase tracking-wide text-emerald-200 transition hover:border-emerald-300 hover:bg-emerald-500/30 sm:w-auto"
-              onClick={() => setIsMuted((prev) => !prev)}
-            >
-              {isMuted ? "Ativar áudio" : "Silenciar áudio"}
-            </button>
-          </div>
-        </section>
+          <section className="rounded-3xl border border-white/10 bg-white/5 p-6 shadow-2xl backdrop-blur">
+            <h3 className="mb-6 text-center text-sm font-semibold uppercase tracking-[0.3em] text-white/70">
+              Seleção de Câmeras
+            </h3>
+            <div className="relative mx-auto aspect-square w-full max-w-[400px]">
+              <div className="absolute inset-[15%] rounded-2xl border-4 border-dashed border-emerald-500/30 bg-linear-to-br from-emerald-950/20 to-emerald-900/10 shadow-inner">
+                <div className="flex h-full items-center justify-center text-center">
+                  <div>
+                    <div className="text-4xl font-bold text-emerald-400/40">畳</div>
+                    <p className="mt-2 text-xs uppercase tracking-widest text-white/30">Tatame</p>
+                  </div>
+                </div>
+              </div>
+
+              {cameras.map((camera, index) => {
+                const angle = (index / cameras.length) * 360;
+                const radians = ((angle - 90) * Math.PI) / 180;
+                const x = 50 + Math.cos(radians) * 42;
+                const y = 50 + Math.sin(radians) * 42;
+                const isActive = index === activeIndex;
+
+                return (
+                  <button
+                    key={camera.filename}
+                    type="button"
+                    onClick={() => selectCamera(index)}
+                    className={`absolute flex h-16 w-16 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-2 font-bold transition-all duration-300 ${isActive
+                      ? "border-emerald-400 bg-emerald-500 text-white shadow-lg shadow-emerald-500/50 scale-110"
+                      : "border-white/30 bg-slate-800/80 text-white/70 hover:border-white hover:bg-slate-700 hover:scale-105"
+                      }`}
+                    style={{
+                      top: `${y}%`,
+                      left: `${x}%`,
+                    }}
+                    aria-pressed={isActive}
+                    aria-label={`Selecionar ${camera.label}`}
+                  >
+                    <div className="text-center">
+                      <div className="text-lg leading-none">{index + 1}</div>
+                      {isActive && (
+                        <div className="text-[8px] leading-none opacity-80">ATIVA</div>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="mt-6 space-y-2">
+              {cameras.map((camera, index) => (
+                <button
+                  key={`label-${camera.filename}`}
+                  onClick={() => selectCamera(index)}
+                  className={`w-full rounded-lg px-4 py-2 text-left text-sm transition-all ${index === activeIndex
+                    ? "bg-emerald-500/20 font-semibold text-emerald-200 border border-emerald-400/50"
+                    : "bg-white/5 text-white/60 hover:bg-white/10 hover:text-white border border-transparent"
+                    }`}
+                >
+                  <span className="font-mono text-xs opacity-60">{index + 1}</span> {camera.label}
+                </button>
+              ))}
+            </div>
+          </section>
+        </div>
       </main>
     </div>
   );
