@@ -69,18 +69,20 @@ export default function Home() {
   const [isCompact, setIsCompact] = useState(false);
   const videoRefs = useRef<(HTMLVideoElement | null)[]>([]);
   const pendingSeekRef = useRef<{ index: number; time: number } | null>(null);
+  const activeIndexRef = useRef(activeIndex);
   const hlsConstructorRef = useRef<null | typeof import("hls.js").default>(null);
   const hlsInstances = useRef<(Hls | null)[]>([]);
 
+  useEffect(() => {
+    activeIndexRef.current = activeIndex;
+  }, [activeIndex]);
+
   const videoSources = useMemo(
     () =>
-      cameras.map((camera, index) => {
-        if (index === activeIndex) {
-          return camera.hlsMasterSrc ?? camera.src;
-        }
-        return camera.hlsPreviewSrc ?? camera.previewSrc ?? camera.src;
+      cameras.map((camera) => {
+        return camera.hlsMasterSrc ?? camera.src;
       }),
-    [activeIndex, cameras],
+    [cameras],
   );
 
   const destroyInstance = useCallback((index: number) => {
@@ -100,17 +102,20 @@ export default function Home() {
       destroyInstance(index);
 
       const requestAutoplay = () => {
-        const playPromise = video.play();
-        if (playPromise) {
-          playPromise.catch(() => undefined);
+        if (video.paused) {
+          const playPromise = video.play();
+          if (playPromise) {
+            playPromise.catch(() => undefined);
+          }
         }
       };
 
       const ensureAutoplay = () => {
-        if (video.readyState >= 1) {
+        if (video.readyState >= 2) {
           requestAutoplay();
         } else {
           video.addEventListener("loadedmetadata", requestAutoplay, { once: true });
+          video.addEventListener("canplay", requestAutoplay, { once: true });
         }
       };
 
@@ -143,6 +148,11 @@ export default function Home() {
         const hls = new HlsConstructor({
           enableWorker: true,
           lowLatencyMode: false,
+          startLevel: -1,
+          capLevelToPlayerSize: true,
+          maxBufferLength: 30,
+          maxMaxBufferLength: 60,
+          backBufferLength: 10,
         });
         hlsInstances.current[index] = hls;
         hls.attachMedia(video);
@@ -151,7 +161,12 @@ export default function Home() {
           hls.loadSource(src);
         });
 
-        hls.on(HlsConstructor.Events.MANIFEST_PARSED, ensureAutoplay);
+        hls.on(HlsConstructor.Events.MANIFEST_PARSED, () => {
+          if (index !== activeIndexRef.current && hls.levels.length > 0) {
+            hls.nextLevel = 0;
+          }
+          ensureAutoplay();
+        });
 
         hls.on(HlsConstructor.Events.ERROR, (_event, data) => {
           if (data?.fatal) {
@@ -206,18 +221,21 @@ export default function Home() {
 
     video.muted = isMuted;
     const attemptPlayback = () => {
-      const playPromise = video.play();
-      if (playPromise) {
-        playPromise.catch(() => {
-          /* ignore autoplay rejection */
-        });
+      if (video.paused) {
+        const playPromise = video.play();
+        if (playPromise) {
+          playPromise.catch(() => {
+            /* ignore autoplay rejection */
+          });
+        }
       }
     };
 
-    if (video.readyState >= 1) {
+    if (video.readyState >= 2) {
       attemptPlayback();
     } else {
       video.addEventListener("loadedmetadata", attemptPlayback, { once: true });
+      video.addEventListener("canplay", attemptPlayback, { once: true });
     }
   }, [activeIndex, isMuted]);
   useEffect(() => {
@@ -225,6 +243,20 @@ export default function Home() {
       attachStream(index, src);
     });
   }, [videoSources, attachStream]);
+
+  useEffect(() => {
+    hlsInstances.current.forEach((hls, index) => {
+      if (!hls) return;
+
+      if (index === activeIndex) {
+        hls.nextLevel = -1;
+      } else {
+        if (hls.levels.length > 0) {
+          hls.nextLevel = 0;
+        }
+      }
+    });
+  }, [activeIndex]);
 
   useEffect(() => {
     const instances = hlsInstances.current;
@@ -335,6 +367,7 @@ export default function Home() {
                       : "opacity-80 group-hover:opacity-100"
                       }`}
                     playsInline
+                    autoPlay
                     loop
                     muted={isMuted || !isActive}
                     preload="auto"
