@@ -12,9 +12,8 @@ export const VideoPlayer = ({ cameras, activeIndex, videoRefs }: VideoPlayerProp
       {cameras.map((camera, index) => (
         <video
           key={camera.name}
-          ref={(el) => (videoRefs.current[index] = el)}
-          className={`absolute inset-0 w-full h-full object-contain ${index === activeIndex ? "opacity-100 z-10" : "opacity-0 z-0"
-            }`}
+          ref={(el) => { videoRefs.current[index] = el }}
+          className={`absolute inset-0 w-full h-full object-contain ${index === activeIndex ? "opacity-100 z-10" : "opacity-0 z-0"}`}
           autoPlay
           playsInline
           muted={false}

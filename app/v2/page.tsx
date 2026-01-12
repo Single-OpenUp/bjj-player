@@ -81,11 +81,12 @@ export default function Home() {
         <div className="grid gap-8 lg:grid-cols-[1fr,auto]">
           {/* Main Video Player */}
           <section className="flex flex-col gap-4">
-            <div ref={videoContainerRef}>
+            <div className="w-full aspect-video">
               <Video
                 cameras={cameras}
                 activeIndex={activeIndex}
                 videoRefs={videoRefs}
+                containerRef={videoContainerRef}
                 showControls={showControls}
                 volume={volume}
                 isFullscreen={isFullscreen}

@@ -6,6 +6,7 @@ interface VideoProps {
   cameras: Camera[];
   activeIndex: number;
   videoRefs: React.MutableRefObject<(HTMLVideoElement | null)[]>;
+  containerRef?: React.RefObject<HTMLDivElement | null>;
   showControls: boolean;
   volume: number;
   isFullscreen: boolean;
@@ -21,6 +22,7 @@ export const Video = ({
   cameras,
   activeIndex,
   videoRefs,
+  containerRef,
   showControls,
   volume,
   isFullscreen,
@@ -35,6 +37,7 @@ export const Video = ({
 
   return (
     <div
+      ref={containerRef}
       className="relative w-full h-full rounded-3xl border border-white/20 bg-black shadow-2xl overflow-hidden"
       onMouseMove={onMouseMove}
       onMouseLeave={onMouseLeave}
